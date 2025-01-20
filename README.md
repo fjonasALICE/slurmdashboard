@@ -2,6 +2,8 @@
 
 A Flask-based web application that provides a real-time dashboard for monitoring Slurm cluster status, jobs, and user statistics.
 
+![Slurm Dashboard Screenshot](SlurmDashboard.png)
+
 ## Features
 
 - Real-time job monitoring
@@ -105,4 +107,8 @@ python slurmdashboard.py
 ```
 
 The development server will start on http://localhost:5000 by default.
+
+## Credit
+
+I wrote this largely with the help of AI to improve my python and Flask skills.
 
