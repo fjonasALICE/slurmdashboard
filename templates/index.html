@@ -53,6 +53,10 @@
     <nav class="navbar navbar-dark bg-dark">
         <div class="container">
             <span class="navbar-brand mb-0 h1">ALF Slurm Dashboard</span>
+            <div class="navbar-nav d-flex flex-row">
+                <a class="nav-link me-3" href="/">Job Overview</a>
+                <a class="nav-link" href="/nodes">Node Status</a>
+            </div>
         </div>
     </nav>
 
@@ -115,6 +119,16 @@
 
             <!-- Right Column -->
             <div class="col-md-4">
+                <!-- CPU Usage Graph Card -->
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">CPU Usage (24h) - rolling 30min window</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="cpuUsageChart"></canvas>
+                    </div>
+                </div>
+
                 <!-- Top Users Card -->
                 <div class="card shadow-sm mb-4">
                     <div class="card-header">
@@ -264,7 +278,26 @@
             return '';
         }
 
-        function updateTopUsers() {
+        function updateDashboard() {
+            // Update jobs
+            fetch('/api/jobs')
+                .then(response => response.json())
+                .then(data => {
+                    currentJobs = data.jobs;
+                    document.getElementById('total-jobs').textContent = data.stats.total;
+                    document.getElementById('running-jobs').textContent = data.stats.running;
+                    document.getElementById('pending-jobs').textContent = data.stats.pending;
+                    renderJobs();
+                });
+
+            // Update CPU usage graph
+            fetch('/api/hourly_usage')
+                .then(response => response.json())
+                .then(data => {
+                    updateCpuUsageChart(data);
+                });
+
+            // Update top users
             fetch('/api/top_users')
                 .then(response => response.json())
                 .then(data => {
@@ -273,8 +306,8 @@
                         `Period: ${data.period.start} to ${data.period.end}`;
 
                     // Update users table
-                    const tableBody = document.getElementById('top-users-body');
-                    tableBody.innerHTML = '';
+                    const tbody = document.getElementById('top-users-body');
+                    tbody.innerHTML = '';
                     
                     data.users.forEach((user, index) => {
                         const row = document.createElement('tr');
@@ -283,35 +316,86 @@
                             <td>${user.user}</td>
                             <td>${user.account}</td>
                             <td>${user.cpu_percent.toFixed(2)}%</td>
-                            <td>${user.cpu_hours.toLocaleString(undefined, {maximumFractionDigits: 1})}</td>
+                            <td>${Math.round(user.cpu_hours)}</td>
                         `;
-                        tableBody.appendChild(row);
+                        tbody.appendChild(row);
                     });
                 });
         }
 
-        function updateJobs() {
-            fetch('/api/jobs')
-                .then(response => response.json())
-                .then(data => {
-                    // Update statistics
-                    document.getElementById('total-jobs').textContent = data.stats.total;
-                    document.getElementById('running-jobs').textContent = data.stats.running;
-                    document.getElementById('pending-jobs').textContent = data.stats.pending;
+        // Initialize CPU Usage Chart
+        let cpuUsageChart = null;
 
-                    // Store and render jobs
-                    currentJobs = data.jobs;
-                    renderJobs();
-                });
+        function updateCpuUsageChart(data) {
+            const ctx = document.getElementById('cpuUsageChart').getContext('2d');
+            
+            const labels = data.data.map(point => {
+                const date = new Date(point.timestamp);
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            });
+            
+            const usageData = data.data.map(point => point.utilization);
+            
+            if (cpuUsageChart) {
+                cpuUsageChart.destroy();
+            }
+            
+            cpuUsageChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'CPU Usage %',
+                        data: usageData,
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.2,
+                        fill: true,
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        pointRadius: 3,
+                        pointHoverRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: (tooltipItems) => {
+                                    const date = new Date(data.data[tooltipItems[0].dataIndex].timestamp);
+                                    return date.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            title: {
+                                display: true,
+                                text: 'Utilization %'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45,
+                                autoSkip: true,
+                                maxTicksLimit: 12  // Show fewer labels on x-axis
+                            }
+                        }
+                    }
+                }
+            });
         }
 
-        // Initial updates
-        updateJobs();
-        updateTopUsers();
-
-        // Update data every 30 seconds
-        setInterval(updateJobs, 30000);
-        setInterval(updateTopUsers, 30000);
+        // Initial update and set interval
+        updateDashboard();
+        setInterval(updateDashboard, 30000);  // Update every 30 seconds
     </script>
 </body>
 </html> 

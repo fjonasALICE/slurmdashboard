@@ -64,29 +64,35 @@ def get_top_users():
     end_date = datetime.now()
     start_date = end_date - timedelta(days=30)
     
-    # Format dates as MMDD
-    start_str = start_date.strftime('%m%d')
-    end_str = end_date.strftime('%m%d')
+    # Format dates as Month/Day-Hour:Minute
+    start_str = start_date.strftime('%m/%d-%H:%M')
+    end_str = end_date.strftime('%m/%d-%H:%M')
     
+    # Get CPU usage
     sreport_cmd = f"sreport user top start={start_str} end={end_str} TopCount=50 -t hourper --tres=cpu -n"
+    app.logger.debug(f"Executing command: {sreport_cmd}")
     output = run_command(sreport_cmd)
+    app.logger.debug(f"Raw sreport output:\n{output}")
     
     users = []
     
     for line in output.strip().split('\n'):
-        # Skip empty lines, headers and separators
         if not line or line.startswith('-') or 'Cluster' in line or 'Login' in line:
             continue
             
-        # Split line into fixed-width fields based on the format shown in example
         try:
-            # Fixed width parsing based on example output format
-            cluster = line[0:10].strip()
-            login = line[10:20].strip()
-            proper_name = line[20:35].strip()
-            account = line[35:50].strip() 
-            tres_name = line[50:65].strip()
-            usage = line[65:].strip()
+            # Split by whitespace and get fields
+            fields = line.split()
+            if len(fields) < 6:  # Need at least cluster, login, proper_name, account, tres_name, usage
+                continue
+                
+            cluster = fields[0]
+            login = fields[1]
+            account = fields[3]
+            usage = fields[-1]  # Last field contains the usage data
+            
+            app.logger.debug(f"Processing line for user {login}:")
+            app.logger.debug(f"  Raw usage field: {usage}")
             
             # Extract usage percentage and hours from the format "1051(16.23%)"
             try:
@@ -94,25 +100,34 @@ def get_top_users():
                     hours_str, percent_str = usage.split('(')
                     hours = float(hours_str)
                     usage_percent = float(percent_str.rstrip('%)'))
+                    app.logger.debug(f"  Parsed hours: {hours}, percent: {usage_percent}")
                 else:
                     hours = float(usage)
                     usage_percent = 0.0
-            except (ValueError, IndexError):
+                    app.logger.debug(f"  Parsed hours (no percent): {hours}")
+            except (ValueError, IndexError) as e:
+                app.logger.error(f"  Error parsing usage values: {str(e)}")
                 hours = 0.0
                 usage_percent = 0.0
             
-            users.append({
+            user_data = {
                 'user': login.rstrip('+'),  # Remove + from truncated names
                 'account': account,
                 'cpu_percent': usage_percent,
                 'cpu_hours': hours
-            })
+            }
+            app.logger.debug(f"  Adding user data: {user_data}")
+            users.append(user_data)
             
         except Exception as e:
+            app.logger.error(f"Error processing line: {str(e)}")
             continue  # Skip malformed lines
     
     # Sort users by CPU percentage
     users.sort(key=lambda x: x['cpu_percent'], reverse=True)
+    app.logger.debug("Final sorted users data:")
+    for user in users[:5]:
+        app.logger.debug(f"  {user}")
     
     return {
         'users': users[:5],  # Top 5 users
@@ -127,8 +142,12 @@ def get_cluster_usage():
     end_date = datetime.now()
     start_date = end_date - timedelta(days=30)  # Default to last 30 days
     
+    # Format dates with hours, minutes, seconds
+    start_str = start_date.strftime('%Y-%m-%dT%H:%M:%S')
+    end_str = end_date.strftime('%Y-%m-%dT%H:%M:%S')
+    
     # Get cluster utilization
-    sreport_cmd = f"sreport cluster utilization start={start_date.strftime('%Y-%m-%d')} end={end_date.strftime('%Y-%m-%d')} -t Hours -n"
+    sreport_cmd = f"sreport cluster utilization start={start_str} end={end_str} -t Hours -n"
     output = run_command(sreport_cmd)
     
     try:
@@ -165,7 +184,7 @@ def get_cluster_usage():
 
             # Create a single data point
             data_point = {
-                'timestamp': datetime.now().strftime('%Y-%m-%d'),
+                'timestamp': end_date.strftime('%Y-%m-%dT%H:%M:%S'),
                 'utilization': round(utilization, 2),
                 'allocated_hours': allocated,
                 'total_hours': reported,
@@ -176,8 +195,8 @@ def get_cluster_usage():
             return {
                 'data': [data_point],
                 'period': {
-                    'start': start_date.strftime('%Y-%m-%d'),
-                    'end': end_date.strftime('%Y-%m-%d')
+                    'start': start_str,
+                    'end': end_str
                 }
             }
 
@@ -185,9 +204,132 @@ def get_cluster_usage():
         app.logger.error(f"Error parsing cluster usage: {str(e)}")
         return {"error": "Could not parse sreport output", "data": []}
 
+def get_node_status():
+    # Get node status using sinfo with a detailed format
+    sinfo_cmd = "sinfo --format='%n|%P|%t|%C|%m|%e|%d' --noheader"
+    output = run_command(sinfo_cmd)
+    
+    nodes = {}
+    node_stats = {'total': 0, 'allocated': 0, 'idle': 0, 'down': 0, 'reserved': 0}
+    
+    for line in output.strip().split('\n'):
+        if line:
+            nodename, partition, state, cpus, memory, free_mem, disk = line.split('|')
+            
+            # Parse CPU info (format: alloc/idle/other/total)
+            cpu_parts = cpus.split('/')
+            
+            # If node already exists, just add the partition
+            if nodename in nodes:
+                if partition not in nodes[nodename]['partitions']:
+                    nodes[nodename]['partitions'].append(partition)
+                continue
+            
+            # Create new node entry
+            nodes[nodename] = {
+                'name': nodename,
+                'partitions': [partition],
+                'state': state,
+                'cpus': {
+                    'allocated': cpu_parts[0],
+                    'idle': cpu_parts[1],
+                    'other': cpu_parts[2],
+                    'total': cpu_parts[3]
+                },
+                'memory': memory,
+                'free_memory': free_mem,
+                'disk': disk
+            }
+            
+            # Update statistics only once per node
+            node_stats['total'] += 1
+            if 'alloc' in state.lower():
+                node_stats['allocated'] += 1
+            elif 'idle' in state.lower():
+                node_stats['idle'] += 1
+            elif 'down' in state.lower():
+                node_stats['down'] += 1
+            elif 'resv' in state.lower():
+                node_stats['reserved'] += 1
+    
+    return {'nodes': list(nodes.values()), 'stats': node_stats}
+
+def get_hourly_usage():
+    # Get CPU usage for the last 24 hours in 30-minute intervals
+    end_date = datetime.now()
+    start_date = end_date - timedelta(hours=24)
+    
+    data_points = []
+    current = end_date
+    
+    # Collect data for each 30-minute interval
+    while current >= start_date:
+        interval_end = current
+        interval_start = current - timedelta(minutes=30)
+        
+        # Format dates
+        start_str = interval_start.strftime('%Y-%m-%dT%H:%M:%S')
+        end_str = interval_end.strftime('%Y-%m-%dT%H:%M:%S')
+        
+        # Get cluster utilization for this interval
+        sreport_cmd = f"sreport cluster utilization start={start_str} end={end_str} -t Hours -p -n"
+        output = run_command(sreport_cmd)
+        
+        try:
+            # Parse pipe-separated values
+            for line in output.strip().split('\n'):
+                if not line or line.startswith('-') or 'Cluster' in line:
+                    continue
+                    
+                parts = line.strip().split('|')
+                if len(parts) >= 7:
+                    allocated = float(parts[1])
+                    down = float(parts[2])
+                    plnd_down = float(parts[3])
+                    idle = float(parts[4])
+                    reserved = float(parts[5])
+                    reported = float(parts[6])
+                    
+                    # Calculate utilization
+                    if reported > 0:
+                        utilization = (allocated / reported) * 100
+                    else:
+                        utilization = 0
+                        
+                    # Create data point
+                    data_point = {
+                        'timestamp': interval_end.strftime('%Y-%m-%dT%H:%M:%S'),
+                        'utilization': round(utilization, 2),
+                        'allocated': allocated,
+                        'total': reported,
+                        'idle': idle,
+                        'down': down
+                    }
+                    data_points.append(data_point)
+                    break  # Take only the first valid line for this interval
+        except Exception as e:
+            app.logger.error(f"Error parsing interval {start_str} to {end_str}: {str(e)}")
+        
+        current = interval_start
+    
+    # Sort data points by timestamp
+    data_points.sort(key=lambda x: x['timestamp'])
+    
+    return {
+        'data': data_points,
+        'period': {
+            'start': start_date.strftime('%Y-%m-%dT%H:%M:%S'),
+            'end': end_date.strftime('%Y-%m-%dT%H:%M:%S')
+        }
+    }
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/nodes')
+def nodes_page():
+    return render_template('nodes.html')
 
 @app.route('/api/jobs')
 def jobs():
@@ -200,6 +342,14 @@ def usage():
 @app.route('/api/top_users')
 def top_users():
     return jsonify(get_top_users())
+
+@app.route('/api/nodes')
+def nodes():
+    return jsonify(get_node_status())
+
+@app.route('/api/hourly_usage')
+def hourly_usage():
+    return jsonify(get_hourly_usage())
 
 if __name__ == '__main__':
     app.run(host='pc059.cern.ch', port=5000)

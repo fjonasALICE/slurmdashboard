@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Node Status - Slurm Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <style>
+        .sortable {
+            cursor: pointer;
+        }
+        .sortable:hover {
+            background-color: rgba(0,0,0,.05);
+        }
+        .sortable::after {
+            content: '↕';
+            margin-left: 5px;
+            opacity: 0.3;
+        }
+        .sortable.asc::after {
+            content: '↑';
+            opacity: 1;
+        }
+        .sortable.desc::after {
+            content: '↓';
+            opacity: 1;
+        }
+        .partition-tag {
+            display: inline-block;
+            margin: 2px;
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">ALF Slurm Dashboard</span>
+            <div class="navbar-nav">
+                <a class="nav-link" href="/">Back to Dashboard</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row mb-4">
+            <div class="col">
+                <div class="card shadow-sm">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">Node Status</h5>
+                        <div>
+                            <span class="badge bg-success me-2">Allocated: <span id="allocated-nodes">-</span></span>
+                            <span class="badge bg-info me-2">Idle: <span id="idle-nodes">-</span></span>
+                            <span class="badge bg-danger me-2">Down: <span id="down-nodes">-</span></span>
+                            <span class="badge bg-warning me-2">Reserved: <span id="reserved-nodes">-</span></span>
+                            <span class="badge bg-secondary">Total: <span id="total-nodes">-</span></span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="name">Node</th>
+                                        <th class="sortable" data-sort="partitions">Partitions</th>
+                                        <th class="sortable" data-sort="state">State</th>
+                                        <th class="sortable" data-sort="cpus">CPUs (used/total)</th>
+                                        <th class="sortable" data-sort="memory">Memory</th>
+                                        <th>Free Memory</th>
+                                        <th>Disk</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="nodes-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentNodes = [];
+        let currentSortColumn = 'name';
+        let currentSortDirection = 'asc';
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click handlers for sortable columns
+            document.querySelectorAll('th.sortable').forEach(th => {
+                th.addEventListener('click', () => {
+                    const column = th.dataset.sort;
+                    if (currentSortColumn === column) {
+                        currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        currentSortColumn = column;
+                        currentSortDirection = 'asc';
+                    }
+                    
+                    // Update sort indicators
+                    document.querySelectorAll('th.sortable').forEach(header => {
+                        header.classList.remove('asc', 'desc');
+                    });
+                    th.classList.add(currentSortDirection);
+                    
+                    renderNodes();
+                });
+            });
+        });
+
+        function updateNodeStats(stats) {
+            document.getElementById('allocated-nodes').textContent = stats.allocated;
+            document.getElementById('idle-nodes').textContent = stats.idle;
+            document.getElementById('down-nodes').textContent = stats.down;
+            document.getElementById('reserved-nodes').textContent = stats.reserved;
+            document.getElementById('total-nodes').textContent = stats.total;
+        }
+
+        function getNodeStateBadge(state) {
+            state = state.toLowerCase();
+            if (state.includes('alloc')) return '<span class="badge bg-success">Allocated</span>';
+            if (state.includes('idle')) return '<span class="badge bg-info">Idle</span>';
+            if (state.includes('down')) return '<span class="badge bg-danger">Down</span>';
+            if (state.includes('resv')) return '<span class="badge bg-warning">Reserved</span>';
+            return '<span class="badge bg-secondary">' + state + '</span>';
+        }
+
+        function renderNodes() {
+            const tableBody = document.getElementById('nodes-table-body');
+            tableBody.innerHTML = '';
+            
+            // Sort nodes
+            const sortedNodes = [...currentNodes].sort((a, b) => {
+                let aVal = a[currentSortColumn];
+                let bVal = b[currentSortColumn];
+                
+                // Special handling for partitions array
+                if (currentSortColumn === 'partitions') {
+                    aVal = aVal.join(',');
+                    bVal = bVal.join(',');
+                }
+                
+                // Convert to numbers if possible
+                if (!isNaN(aVal)) aVal = Number(aVal);
+                if (!isNaN(bVal)) bVal = Number(bVal);
+                
+                if (aVal < bVal) return currentSortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return currentSortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+            
+            sortedNodes.forEach(node => {
+                const row = document.createElement('tr');
+                const partitionBadges = node.partitions.map(p => 
+                    `<span class="badge bg-secondary partition-tag">${p}</span>`
+                ).join(' ');
+                
+                row.innerHTML = `
+                    <td>${node.name}</td>
+                    <td>${partitionBadges}</td>
+                    <td>${getNodeStateBadge(node.state)}</td>
+                    <td>${node.cpus.allocated}/${node.cpus.total}</td>
+                    <td>${node.memory}</td>
+                    <td>${node.free_memory}</td>
+                    <td>${node.disk}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        function updateDashboard() {
+            fetch('/api/nodes')
+                .then(response => response.json())
+                .then(data => {
+                    currentNodes = data.nodes;
+                    updateNodeStats(data.stats);
+                    renderNodes();
+                });
+        }
+
+        // Initial update and set interval
+        updateDashboard();
+        setInterval(updateDashboard, 30000);  // Update every 30 seconds
+    </script>
+</body>
+</html> 
