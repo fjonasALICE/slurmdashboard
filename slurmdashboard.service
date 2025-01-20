@@ -1,0 +1,17 @@
+[Unit]
+Description=Slurm Dashboard Web Application
+After=network.target
+
+[Service]
+User=fjonas
+Group=fjonas
+WorkingDirectory=/software/centralsoft/slurmdashboard
+Environment="PATH=/software/centralsoft/slurmdashboard/venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin"
+Environment="PYTHONPATH=/software/centralsoft/slurmdashboard"
+# Add any other environment variables needed for Slurm
+Environment="SLURM_CONF=/etc/slurm/slurm.conf"
+ExecStart=/software/centralsoft/slurmdashboard/venv/bin/gunicorn --workers 3 --bind pc059.cern.ch:5000 slurmdashboard:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target 
