@@ -31,7 +31,7 @@ def run_command(command):
 
 def get_current_jobs():
     # Get current jobs using squeue with a nice format
-    squeue_cmd = "squeue --format='%i|%u|%P|%j|%T|%M|%l|%D|%C' --noheader"
+    squeue_cmd = "squeue --format='%i|%u|%P|%j|%T|%M|%l|%D|%C|%N' --noheader"
     output = run_command(squeue_cmd)
     
     jobs = []
@@ -39,7 +39,7 @@ def get_current_jobs():
     
     for line in output.strip().split('\n'):
         if line:
-            job_id, user, partition, name, state, time, time_limit, nodes, cpus = line.split('|')
+            job_id, user, partition, name, state, time, time_limit, nodes, cpus, nodelist = line.split('|')
             jobs.append({
                 'job_id': job_id,
                 'user': user,
@@ -49,7 +49,8 @@ def get_current_jobs():
                 'time': time,
                 'time_limit': time_limit,
                 'nodes': nodes,
-                'cpus': cpus
+                'cpus': cpus,
+                'nodelist': nodelist
             })
             job_stats['total'] += 1
             if state == 'RUNNING':

@@ -107,6 +107,7 @@
                                         <th class="sortable" data-sort="state">State</th>
                                         <th class="sortable" data-sort="cpus">CPUs</th>
                                         <th class="sortable" data-sort="time">Time</th>
+                                        <th class="sortable" data-sort="nodelist">Nodes</th>
                                     </tr>
                                 </thead>
                                 <tbody id="jobs-table-body">
@@ -221,6 +222,7 @@
                 <tr><td><strong>Time:</strong></td><td>${job.time}</td></tr>
                 <tr><td><strong>Time Limit:</strong></td><td>${job.time_limit}</td></tr>
                 <tr><td><strong>Nodes:</strong></td><td>${job.nodes}</td></tr>
+                <tr><td><strong>Node List:</strong></td><td>${job.state === 'RUNNING' ? job.nodelist.split(',').map(node => `<span class="badge bg-secondary">${node}</span>`).join(' ') : job.nodelist}</td></tr>
                 <tr><td><strong>Partition:</strong></td><td>${job.partition}</td></tr>
             `;
             jobDetailsModal.show();
@@ -257,6 +259,7 @@
                     <td>${getStatusBadge(job.state)}</td>
                     <td>${job.cpus}</td>
                     <td>${job.time}</td>
+                    <td>${job.state === 'RUNNING' ? job.nodelist.split(',').map(node => `<span class="badge bg-secondary">${node}</span>`).join(' ') : job.nodelist}</td>
                 `;
                 tableBody.appendChild(row);
             });
