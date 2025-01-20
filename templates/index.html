@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slurm Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .stats-card {
+            transition: transform 0.2s;
+        }
+        .stats-card:hover {
+            transform: translateY(-5px);
+        }
+        .table-hover tbody tr:hover {
+            background-color: rgba(0,0,0,.075);
+            cursor: pointer;
+        }
+        .badge-running {
+            background-color: #198754 !important;
+        }
+        .badge-pending {
+            background-color: #ffc107 !important;
+            color: #000 !important;
+        }
+        .medal-1 { color: #FFD700; }  /* Gold */
+        .medal-2 { color: #C0C0C0; }  /* Silver */
+        .medal-3 { color: #CD7F32; }  /* Bronze */
+        .sortable {
+            cursor: pointer;
+        }
+        .sortable:hover {
+            background-color: rgba(0,0,0,.05);
+        }
+        .sortable::after {
+            content: '↕';
+            margin-left: 5px;
+            opacity: 0.3;
+        }
+        .sortable.asc::after {
+            content: '↑';
+            opacity: 1;
+        }
+        .sortable.desc::after {
+            content: '↓';
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">ALF Slurm Dashboard</span>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <!-- Job Statistics Cards -->
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card stats-card bg-primary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Jobs</h5>
+                        <h2 class="card-text" id="total-jobs">-</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stats-card bg-success text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Running Jobs</h5>
+                        <h2 class="card-text" id="running-jobs">-</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stats-card bg-warning">
+                    <div class="card-body">
+                        <h5 class="card-title">Pending Jobs</h5>
+                        <h2 class="card-text" id="pending-jobs">-</h2>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Jobs Table -->
+            <div class="col-md-8">
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Current Jobs</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="job_id">Job ID</th>
+                                        <th class="sortable" data-sort="user">User</th>
+                                        <th class="sortable" data-sort="name">Name</th>
+                                        <th class="sortable" data-sort="state">State</th>
+                                        <th class="sortable" data-sort="cpus">CPUs</th>
+                                        <th class="sortable" data-sort="time">Time</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jobs-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="col-md-4">
+                <!-- Top Users Card -->
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Top Users of the Month</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small" id="usage-period">Period: Loading...</p>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Rank</th>
+                                        <th>User</th>
+                                        <th>Account</th>
+                                        <th>CPU %</th>
+                                        <th>CPU Hours</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="top-users-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Job Details Modal -->
+    <div class="modal fade" id="jobDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Job Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <table class="table table-sm">
+                        <tbody id="job-details-body">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        let currentJobs = [];  // Store jobs data globally
+        let currentSortColumn = 'job_id';
+        let currentSortDirection = 'asc';
+        let jobDetailsModal;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize the modal
+            jobDetailsModal = new bootstrap.Modal(document.getElementById('jobDetailsModal'));
+
+            // Add click handlers for sortable columns
+            document.querySelectorAll('th.sortable').forEach(th => {
+                th.addEventListener('click', () => {
+                    const column = th.dataset.sort;
+                    if (currentSortColumn === column) {
+                        currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        currentSortColumn = column;
+                        currentSortDirection = 'asc';
+                    }
+                    
+                    // Update sort indicators
+                    document.querySelectorAll('th.sortable').forEach(header => {
+                        header.classList.remove('asc', 'desc');
+                    });
+                    th.classList.add(currentSortDirection);
+                    
+                    renderJobs();
+                });
+            });
+        });
+
+        function showJobDetails(job) {
+            const detailsBody = document.getElementById('job-details-body');
+            detailsBody.innerHTML = `
+                <tr><td><strong>Job ID:</strong></td><td>${job.job_id}</td></tr>
+                <tr><td><strong>User:</strong></td><td>${job.user}</td></tr>
+                <tr><td><strong>Name:</strong></td><td>${job.name}</td></tr>
+                <tr><td><strong>State:</strong></td><td>${getStatusBadge(job.state)}</td></tr>
+                <tr><td><strong>CPUs:</strong></td><td>${job.cpus}</td></tr>
+                <tr><td><strong>Time:</strong></td><td>${job.time}</td></tr>
+                <tr><td><strong>Time Limit:</strong></td><td>${job.time_limit}</td></tr>
+                <tr><td><strong>Nodes:</strong></td><td>${job.nodes}</td></tr>
+                <tr><td><strong>Partition:</strong></td><td>${job.partition}</td></tr>
+            `;
+            jobDetailsModal.show();
+        }
+
+        function sortJobs(jobs) {
+            return jobs.sort((a, b) => {
+                let aVal = a[currentSortColumn];
+                let bVal = b[currentSortColumn];
+                
+                // Convert to numbers if possible
+                if (!isNaN(aVal)) aVal = Number(aVal);
+                if (!isNaN(bVal)) bVal = Number(bVal);
+                
+                if (aVal < bVal) return currentSortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return currentSortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        function renderJobs() {
+            const tableBody = document.getElementById('jobs-table-body');
+            tableBody.innerHTML = '';
+            
+            const sortedJobs = sortJobs([...currentJobs]);
+            
+            sortedJobs.forEach(job => {
+                const row = document.createElement('tr');
+                row.onclick = () => showJobDetails(job);
+                row.innerHTML = `
+                    <td>${job.job_id}</td>
+                    <td>${job.user}</td>
+                    <td>${job.name}</td>
+                    <td>${getStatusBadge(job.state)}</td>
+                    <td>${job.cpus}</td>
+                    <td>${job.time}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        function getStatusBadge(state) {
+            if (state === 'RUNNING') {
+                return `<span class="badge badge-running">${state}</span>`;
+            } else if (state === 'PENDING') {
+                return `<span class="badge badge-pending">${state}</span>`;
+            }
+            return state;
+        }
+
+        function getMedalIcon(rank) {
+            if (rank === 0) return '<i class="bi bi-trophy-fill medal-1"></i>';
+            if (rank === 1) return '<i class="bi bi-trophy-fill medal-2"></i>';
+            if (rank === 2) return '<i class="bi bi-trophy-fill medal-3"></i>';
+            return '';
+        }
+
+        function updateTopUsers() {
+            fetch('/api/top_users')
+                .then(response => response.json())
+                .then(data => {
+                    // Update period text
+                    document.getElementById('usage-period').textContent = 
+                        `Period: ${data.period.start} to ${data.period.end}`;
+
+                    // Update users table
+                    const tableBody = document.getElementById('top-users-body');
+                    tableBody.innerHTML = '';
+                    
+                    data.users.forEach((user, index) => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${getMedalIcon(index)}</td>
+                            <td>${user.user}</td>
+                            <td>${user.account}</td>
+                            <td>${user.cpu_percent.toFixed(2)}%</td>
+                            <td>${user.cpu_hours.toLocaleString(undefined, {maximumFractionDigits: 1})}</td>
+                        `;
+                        tableBody.appendChild(row);
+                    });
+                });
+        }
+
+        function updateJobs() {
+            fetch('/api/jobs')
+                .then(response => response.json())
+                .then(data => {
+                    // Update statistics
+                    document.getElementById('total-jobs').textContent = data.stats.total;
+                    document.getElementById('running-jobs').textContent = data.stats.running;
+                    document.getElementById('pending-jobs').textContent = data.stats.pending;
+
+                    // Store and render jobs
+                    currentJobs = data.jobs;
+                    renderJobs();
+                });
+        }
+
+        // Initial updates
+        updateJobs();
+        updateTopUsers();
+
+        // Update data every 30 seconds
+        setInterval(updateJobs, 30000);
+        setInterval(updateTopUsers, 30000);
+    </script>
+</body>
+</html> 
