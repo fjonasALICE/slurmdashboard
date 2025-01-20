@@ -82,17 +82,25 @@ def get_top_users():
             
         try:
             # Split by whitespace and get fields
-            fields = line.split()
-            if len(fields) < 6:  # Need at least cluster, login, proper_name, account, tres_name, usage
+            # Expected format: cluster login proper_name account tres_name usage
+            fields = [f for f in line.split() if f]  # Remove empty strings
+            if len(fields) < 6:  # Need at least all required fields
+                app.logger.debug(f"Skipping line with insufficient fields: {line}")
                 continue
                 
-            cluster = fields[0]
-            login = fields[1]
-            account = fields[3]
-            usage = fields[-1]  # Last field contains the usage data
+            # Find the account field by looking for the TRES field (cpu) and taking the field before it
+            try:
+                tres_index = fields.index('cpu')
+                account = fields[tres_index - 1]
+                login = fields[1]
+                usage = fields[-1]  # Last field contains the usage data
+            except ValueError:
+                app.logger.debug(f"Could not find 'cpu' field in line: {line}")
+                continue
             
             app.logger.debug(f"Processing line for user {login}:")
             app.logger.debug(f"  Raw usage field: {usage}")
+            app.logger.debug(f"  Account: {account}")
             
             # Extract usage percentage and hours from the format "1051(16.23%)"
             try:
